@@ -31,9 +31,8 @@ import {getData, listen} from '../../../src/event-helper';
 import {isLayoutSizeDefined} from '../../../src/layout';
 import {isObject} from '../../../src/types';
 import {removeElement} from '../../../src/dom';
-import {startsWith} from '../../../src/string';
 import {tryParseJson} from '../../../src/json';
-import {userAssert} from '../../../src/log';
+import {pureUserAssert as userAssert} from '../../../src/core/assert';
 
 export class AmpImgur extends AMP.BaseElement {
   /** @param {!AmpElement} element */
@@ -82,7 +81,7 @@ export class AmpImgur extends AMP.BaseElement {
     const sanitizedID = this.imgurid_.replace(
       /^(a\/)?(.*)/,
       (match, aSlash, rest) => {
-        return (aSlash || '') + encodeURIComponent(rest);
+        return 'a/' + encodeURIComponent(rest);
       }
     );
     iframe.src = 'https://imgur.com/' + sanitizedID + '/embed?pub=true';
@@ -106,8 +105,7 @@ export class AmpImgur extends AMP.BaseElement {
     if (
       !eventData ||
       !(
-        isObject(eventData) ||
-        startsWith(/** @type {string} */ (eventData), '{')
+        isObject(eventData) || /** @type {string} */ (eventData).startsWith('{')
       )
     ) {
       return;

@@ -14,7 +14,11 @@
  * limitations under the License.
  */
 
-import {decryptAesGcm} from '../../../third_party/subscriptions-project/aes_gcm';
+import {
+  base64Decode,
+  decryptAesGcmImpl,
+  safeAesGcmImportKey,
+} from '../../../third_party/subscriptions-project/aes_gcm';
 import {iterateCursor} from '../../../src/dom';
 import {padStart} from '../../../src/string';
 import {toArray} from '../../../src/types';
@@ -72,17 +76,17 @@ export class CryptoHandler {
    * Returns encrypted document key if it exists.
    * This key is needed for requesting a different key
    * that decrypts locked content on the page.
-   * @param {string} serviceId Who you want to decrypt the key.
-   *                           For example: 'google.com'
+   * @param {string} platformKey Who you want to decrypt the key.
+   *                             For example: 'google.com'
    * @return {?string}
    */
-  getEncryptedDocumentKey(serviceId) {
+  getEncryptedDocumentKey(platformKey) {
     // Doing this for testing.
     const encryptedKeys = this.getEncryptedKeys();
     if (!encryptedKeys) {
       return null;
     }
-    return encryptedKeys[serviceId] || null;
+    return encryptedKeys[platformKey] || null;
   }
 
   /**
@@ -116,21 +120,27 @@ export class CryptoHandler {
       return this.decryptionPromise_;
     }
     this.decryptionPromise_ = this.ampdoc_.whenReady().then(() => {
-      const encryptedSections = this.ampdoc_
-        .getRootNode()
-        .querySelectorAll('script[ciphertext]');
-      const promises = [];
-      iterateCursor(encryptedSections, (encryptedSection) => {
-        promises.push(
-          decryptAesGcm(
-            decryptedDocumentKey,
-            encryptedSection.textContent
-          ).then((decryptedContent) => {
-            encryptedSection./*OK*/ outerHTML = decryptedContent;
-          })
-        );
+      const keybytes = base64Decode(decryptedDocumentKey);
+      return safeAesGcmImportKey(keybytes.buffer).then((formattedkey) => {
+        const encryptedSections = this.ampdoc_
+          .getRootNode()
+          .querySelectorAll('script[ciphertext]');
+        const promises = [];
+        iterateCursor(encryptedSections, (encryptedSection) => {
+          const text = encryptedSection.textContent.replace(/\s+/g, '');
+          const contentBuffer = base64Decode(text).buffer;
+          const iv = contentBuffer.slice(0, 12);
+          const bytesToDecrypt = contentBuffer.slice(12);
+          promises.push(
+            decryptAesGcmImpl(formattedkey, iv, bytesToDecrypt).then(
+              (decryptedContent) => {
+                encryptedSection./*OK*/ outerHTML = decryptedContent;
+              }
+            )
+          );
+        });
+        return Promise.all(promises);
       });
-      return Promise.all(promises);
     });
     return this.decryptionPromise_;
   }

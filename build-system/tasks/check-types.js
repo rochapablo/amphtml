@@ -14,38 +14,38 @@
  * limitations under the License.
  */
 
-const log = require('fancy-log');
-const {
-  checkTypesNailgunPort,
-  startNailgunServer,
-  stopNailgunServer,
-} = require('./nailgun');
 const {
   createCtrlcHandler,
   exitCtrlcHandler,
 } = require('../common/ctrlcHandler');
+const {
+  displayLifecycleDebugging,
+} = require('../compile/debug-compilation-lifecycle');
 const {cleanupBuildDir, closureCompile} = require('../compile/compile');
 const {compileCss} = require('./css');
 const {extensions, maybeInitializeExtensions} = require('./extension-helpers');
-const {maybeUpdatePackages} = require('./update-packages');
+const {log} = require('../common/logging');
+const {typecheckNewServer} = require('../server/typescript-compile');
 
 /**
  * Dedicated type check path.
  * @return {!Promise}
  */
 async function checkTypes() {
-  maybeUpdatePackages();
   const handlerProcess = createCtrlcHandler('check-types');
   process.env.NODE_ENV = 'production';
   cleanupBuildDir();
   maybeInitializeExtensions();
+
+  typecheckNewServer();
+
   const compileSrcs = [
-    './src/amp.js',
-    './src/amp-shadow.js',
-    './src/inabox/amp-inabox.js',
-    './ads/alp/install-alp.js',
-    './ads/inabox/inabox-host.js',
-    './src/web-worker/web-worker.js',
+    'src/amp.js',
+    'src/amp-shadow.js',
+    'src/inabox/amp-inabox.js',
+    'ads/alp/install-alp.js',
+    'ads/inabox/inabox-host.js',
+    'src/web-worker/web-worker.js',
   ];
   const extensionValues = Object.keys(extensions).map(function (key) {
     return extensions[key];
@@ -56,7 +56,7 @@ async function checkTypes() {
     })
     .map(function (extension) {
       return (
-        './extensions/' +
+        'extensions/' +
         extension.name +
         '/' +
         extension.version +
@@ -67,11 +67,9 @@ async function checkTypes() {
     })
     .sort();
   return compileCss()
-    .then(async () => {
-      await startNailgunServer(checkTypesNailgunPort, /* detached */ false);
-    })
     .then(() => {
       log('Checking types...');
+      displayLifecycleDebugging();
       return Promise.all([
         closureCompile(
           compileSrcs.concat(extensionSrcs),
@@ -86,7 +84,7 @@ async function checkTypes() {
         ),
         // Type check 3p/ads code.
         closureCompile(
-          ['./3p/integration.js'],
+          ['3p/integration.js'],
           './dist',
           'integration-check-types.js',
           {
@@ -97,7 +95,7 @@ async function checkTypes() {
           }
         ),
         closureCompile(
-          ['./3p/ampcontext-lib.js'],
+          ['3p/ampcontext-lib.js'],
           './dist',
           'ampcontext-check-types.js',
           {
@@ -108,7 +106,7 @@ async function checkTypes() {
           }
         ),
         closureCompile(
-          ['./3p/iframe-transport-client-lib.js'],
+          ['3p/iframe-transport-client-lib.js'],
           './dist',
           'iframe-transport-client-check-types.js',
           {
@@ -119,9 +117,6 @@ async function checkTypes() {
           }
         ),
       ]);
-    })
-    .then(async () => {
-      await stopNailgunServer(checkTypesNailgunPort);
     })
     .then(() => exitCtrlcHandler(handlerProcess));
 }
@@ -134,7 +129,8 @@ module.exports = {
 
 checkTypes.description = 'Check source code for JS type errors';
 checkTypes.flags = {
-  closure_concurrency: '  Sets the number of concurrent invocations of closure',
-  disable_nailgun:
-    "  Doesn't use nailgun to invoke closure compiler (much slower)",
+  closure_concurrency: 'Sets the number of concurrent invocations of closure',
+  debug: 'Outputs the file contents during compilation lifecycles',
+  warning_level:
+    "Optionally sets closure's warning level to one of [quiet, default, verbose]",
 };

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import {PageConfig} from '../../../third_party/subscriptions-project/config';
+import {PageConfig as PageConfigInterface} from '../../../third_party/subscriptions-project/config';
 
 export class ServiceAdapter {
   /**
@@ -42,16 +42,16 @@ export class ServiceAdapter {
 
   /**
    * Returns the encrypted document key for the specified service.
-   * @param {string} serviceId
+   * @param {string} platformKey
    * @return {?string}
    */
-  getEncryptedDocumentKey(serviceId) {
-    return this.subscriptionService_.getEncryptedDocumentKey(serviceId);
+  getEncryptedDocumentKey(platformKey) {
+    return this.subscriptionService_.getEncryptedDocumentKey(platformKey);
   }
 
   /**
    * Returns the page config.
-   * @return {!PageConfig}
+   * @return {!PageConfigInterface}
    */
   getPageConfig() {
     return this.subscriptionService_.getPageConfig();
@@ -59,11 +59,11 @@ export class ServiceAdapter {
 
   /**
    * Returns the reader ID for the specified service.
-   * @param {string} serviceId
+   * @param {string} platformKey
    * @return {!Promise<string>}
    */
-  getReaderId(serviceId) {
-    return this.subscriptionService_.getReaderId(serviceId);
+  getReaderId(platformKey) {
+    return this.subscriptionService_.getReaderId(platformKey);
   }
 
   /**
@@ -77,33 +77,39 @@ export class ServiceAdapter {
   /**
    * Delegates actions to local platform.
    * @param {string} action
+   * @param {?string} sourceId
    * @return {!Promise<boolean>}
    */
-  delegateActionToLocal(action) {
-    return this.delegateActionToService(action, 'local');
+  delegateActionToLocal(action, sourceId) {
+    return this.delegateActionToService(action, 'local', sourceId);
   }
 
   /**
    * Delegates actions to a given service.
    * @param {string} action
-   * @param {string} serviceId
+   * @param {string} platformKey
+   * @param {?string} sourceId
    * @return {!Promise<boolean>}
    */
-  delegateActionToService(action, serviceId) {
-    return this.subscriptionService_.delegateActionToService(action, serviceId);
+  delegateActionToService(action, platformKey, sourceId) {
+    return this.subscriptionService_.delegateActionToService(
+      action,
+      platformKey,
+      sourceId
+    );
   }
 
   /**
    * Delegate UI decoration to another service.
    * @param {!Element} element
-   * @param {string} serviceId
+   * @param {string} platformKey
    * @param {string} action
    * @param {?JsonObject} options
    */
-  decorateServiceAction(element, serviceId, action, options) {
+  decorateServiceAction(element, platformKey, action, options) {
     this.subscriptionService_.decorateServiceAction(
       element,
-      serviceId,
+      platformKey,
       action,
       options
     );
@@ -124,13 +130,43 @@ export class ServiceAdapter {
   selectPlatformForLogin() {
     return this.subscriptionService_.selectPlatformForLogin();
   }
-}
 
-/**
- * @package
- * @visibleForTesting
- * @return {*} TODO(#23582): Specify return type
- */
-export function getPageConfigForTesting() {
-  return PageConfig;
+  /**
+   * Loads metering state.
+   * @return {!Promise<?./metering-store.MeteringStateDef>}
+   */
+  loadMeteringState() {
+    if (!this.subscriptionService_.metering_) {
+      return Promise.resolve(null);
+    }
+
+    return this.subscriptionService_.metering_.loadMeteringState();
+  }
+
+  /**
+   * Saves metering state.
+   * @param {!./metering-store.MeteringStateDef} meteringState
+   * @return {!Promise}
+   */
+  saveMeteringState(meteringState) {
+    if (!this.subscriptionService_.metering_) {
+      return Promise.resolve();
+    }
+
+    return this.subscriptionService_.metering_.saveMeteringState(meteringState);
+  }
+
+  /**
+   * Remembers metering entitlements were fetched
+   * with the current metering state.
+   *
+   * This helps avoid redundant fetches.
+   */
+  rememberMeteringEntitlementsWereFetched() {
+    if (!this.subscriptionService_.metering_) {
+      return;
+    }
+
+    this.subscriptionService_.metering_.entitlementsWereFetchedWithCurrentMeteringState = true;
+  }
 }

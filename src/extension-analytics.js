@@ -17,7 +17,7 @@
 import {CommonSignals} from './common-signals';
 import {Services} from './services';
 import {createElementWithAttributes, removeElement} from './dom';
-import {devAssert} from './log';
+import {pureDevAssert as devAssert} from './core/assert';
 import {dict} from './utils/object';
 import {isArray, toWin} from './types';
 import {triggerAnalyticsEvent} from './analytics';
@@ -126,7 +126,8 @@ class CustomEventReporter {
     triggerAnalyticsEvent(
       this.parent_,
       this.getEventTypeInSandbox_(eventType),
-      opt_vars
+      opt_vars,
+      /** enableDataVars */ false
     );
   }
   /**

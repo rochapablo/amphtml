@@ -27,11 +27,46 @@ describes.fakeWin('DomTransformStream', {amp: true}, (env) => {
   let win;
   let transformer;
   let detachedDoc;
+  let transferThrottleSpy;
 
   beforeEach(() => {
     win = env.win;
     detachedDoc = win.document.implementation.createHTMLDocument().open();
-    transformer = new DomTransformStream(win);
+    transferThrottleSpy = env.sandbox.stub().callsArgAsync(0);
+    transformer = new DomTransformStream(
+      win,
+      transferThrottleSpy // opt_transferThrottleFunc
+    );
+  });
+
+  describe('#onEnd', () => {
+    it('should only transfer after targetBody is ready', async () => {
+      const {body} = win.document;
+      detachedDoc.write(`
+        <!doctype html>
+        <html ⚡>
+        <head>
+        <script async src="https://cdn.ampproject.org/v0.js"></script>
+        </head>
+        <body>
+        <child-one></child-one>
+        <child-two></child-two>
+        </body>
+      `);
+
+      transformer.onChunk(detachedDoc);
+      transformer.onEnd();
+      await flush();
+
+      expect(transferThrottleSpy).not.to.have.been.called;
+      transformer.transferBody(body /* targetBody */);
+
+      await flush();
+
+      expect(transferThrottleSpy).to.have.been.calledOnce;
+      expect(body.querySelector('child-one')).to.exist;
+      expect(body.querySelector('child-two')).to.exist;
+    });
   });
 
   describe('#waitForHead', () => {
@@ -82,6 +117,28 @@ describes.fakeWin('DomTransformStream', {amp: true}, (env) => {
 
       expect(body.querySelector('child-one')).to.exist;
       expect(body.querySelector('child-two')).to.exist;
+    });
+
+    it('should transfer <body> attributes to target body element', async () => {
+      const {body} = win.document;
+      detachedDoc.write(`
+        <!doctype html>
+          <html ⚡>
+          <head>
+            <script async src="https://cdn.ampproject.org/v0.js"></script>
+          </head>
+          <body marginwidth="0" marginheight="0" class="amp-cats" style="opacity: 1;">
+            <child-one></child-one>
+            <child-two></child-two>
+     `);
+      transformer.onChunk(detachedDoc);
+      transformer.transferBody(body /* targetBody */);
+      await flush();
+
+      expect(body.getAttribute('marginwidth')).to.equal('0');
+      expect(body.getAttribute('marginheight')).to.equal('0');
+      expect(body.getAttribute('style')).to.equal('opacity: 1;');
+      expect(body).to.have.class('amp-cats');
     });
 
     it('should keep transferring new chunks after call', async () => {

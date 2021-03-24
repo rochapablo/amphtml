@@ -31,13 +31,8 @@ import {parseJson} from '../../../src/json';
 const TAG = 'amp-experiment';
 
 export class AmpExperiment extends AMP.BaseElement {
-  /** @override */
-  isLayoutSupported(layout) {
-    return layout == Layout.NODISPLAY || layout == Layout.CONTAINER;
-  }
-
-  /** @override */
-  prerenderAllowed() {
+  /** @override @nocollapse */
+  static prerenderAllowed() {
     /*
      * Prerender is allowed because the client_id is only used to calculate
      * the variant bucket.
@@ -45,6 +40,11 @@ export class AmpExperiment extends AMP.BaseElement {
      * during prerender, the base cid will be stored in the AMP viewer domain.
      */
     return true;
+  }
+
+  /** @override */
+  isLayoutSupported(layout) {
+    return layout == Layout.NODISPLAY || layout == Layout.CONTAINER;
   }
 
   /** @override */
@@ -77,9 +77,7 @@ export class AmpExperiment extends AMP.BaseElement {
             Promise.resolve(this.getEmptyExperimentToVariant_(config))
           );
 
-          return Promise.reject(
-            'Experiment amp-experiment-1.0 is not enabled.'
-          );
+          return;
         }
 
         const ampdoc = this.getAmpDoc();

@@ -17,6 +17,8 @@
 import {
   CONSENT_ITEM_STATE,
   ConsentInfoDef,
+  ConsentMetadataDef,
+  PURPOSE_CONSENT_STATE,
   calculateLegacyStateValue,
   composeStoreValue,
   constructConsentInfo,
@@ -30,12 +32,13 @@ import {Deferred} from '../../../src/utils/promise';
 import {Services} from '../../../src/services';
 import {assertHttpsUrl} from '../../../src/url';
 import {dev, devAssert, user} from '../../../src/log';
+import {dict, hasOwn} from '../../../src/utils/object';
+import {expandConsentEndpointUrl, getConsentCID} from './consent-config';
 
 const TAG = 'CONSENT-STATE-MANAGER';
-const CID_SCOPE = 'AMP-CONSENT';
 
 /** @visibleForTesting */
-export const CONSENT_STRING_MAX_LENGTH = 1024;
+export const CONSENT_STORAGE_MAX = 1200;
 
 export class ConsentStateManager {
   /**
@@ -60,6 +63,17 @@ export class ConsentStateManager {
 
     /** @private {?function()} */
     this.consentReadyResolver_ = null;
+
+    /** @private {Object<string, PURPOSE_CONSENT_STATE>|undefined} */
+    this.purposeConsents_ = undefined;
+
+    const allPurposeConsentsDeferred = new Deferred();
+
+    /** @private {?function()} */
+    this.hasAllPurposeConsentsResolver_ = allPurposeConsentsDeferred.resolve;
+
+    /** @private {!Promise} */
+    this.hasAllPurposeConsentsPromise_ = allPurposeConsentsDeferred.promise;
   }
 
   /**
@@ -93,20 +107,56 @@ export class ConsentStateManager {
    * Update consent instance state
    * @param {CONSENT_ITEM_STATE} state
    * @param {string=} consentStr
-   * @param {Object=} opt_consentMetadata
+   * @param {ConsentMetadataDef=} opt_consentMetadata
    */
   updateConsentInstanceState(state, consentStr, opt_consentMetadata) {
     if (!this.instance_) {
       dev().error(TAG, 'instance not registered');
       return;
     }
-    this.instance_.update(state, consentStr, opt_consentMetadata, false);
+    this.instance_.update(
+      state,
+      consentStr,
+      this.purposeConsents_,
+      opt_consentMetadata,
+      false
+    );
 
     if (this.consentChangeHandler_) {
       this.consentChangeHandler_(
-        constructConsentInfo(state, consentStr, opt_consentMetadata)
+        constructConsentInfo(
+          state,
+          consentStr,
+          opt_consentMetadata,
+          this.purposeConsents_
+        )
       );
+      // Need to be called after handler.
+      this.hasAllPurposeConsents();
     }
+  }
+
+  /**
+   * Update our current purposeConsents, that will be
+   * used in subsequent calls to update().
+   * @param {!Object<string, boolean>} purposeMap
+   * @param {boolean} defaultsOnly
+   */
+  updateConsentInstancePurposes(purposeMap, defaultsOnly = false) {
+    if (!this.purposeConsents_) {
+      this.purposeConsents_ = {};
+    }
+    const purposes = Object.keys(purposeMap);
+    purposes.forEach((purpose) => {
+      // If defaults only, then only update if it doesn't exist.
+      if (defaultsOnly && hasOwn(this.purposeConsents_, purpose)) {
+        return;
+      }
+      const value = !!purposeMap[purpose]
+        ? PURPOSE_CONSENT_STATE.ACCEPTED
+        : PURPOSE_CONSENT_STATE.REJECTED;
+      this.purposeConsents_[purpose] = value;
+    });
   }
 
   /**
@@ -165,14 +215,21 @@ export class ConsentStateManager {
   }
 
   /**
-   * Sets a promise which resolves to a boolean that is to be returned
-   * from the remote endpoint.
-   *
-   * @param {!Promise<?boolean>} gdprAppliesPromise
+   * Signifies that we collected all the purpose consents
+   * from our source of truth (i.e locally stored or updated)
    */
-  setConsentInstanceGdprApplies(gdprAppliesPromise) {
-    devAssert(this.instance_, '%s: cannot find the instance', TAG);
-    this.instance_.gdprAppliesPromise = gdprAppliesPromise;
+  hasAllPurposeConsents() {
+    this.hasAllPurposeConsentsResolver_();
+  }
+
+  /**
+   * Wait for our purpose consents to be collected,
+   * either locally or from update. Let amp-consent handle
+   * when to resolve the promis (via update() or directly).
+   * @return {!Promise}
+   */
+  whenHasAllPurposeConsents() {
+    return this.hasAllPurposeConsentsPromise_;
   }
 
   /**
@@ -192,16 +249,6 @@ export class ConsentStateManager {
   getConsentInstanceSharedData() {
     devAssert(this.instance_, '%s: cannot find the instance', TAG);
     return this.instance_.sharedDataPromise;
-  }
-
-  /**
-   * Returns a promise that resolves to a gdprApplies value
-   *
-   * @return {?Promise<?boolean>}
-   */
-  getConsentInstanceGdprApplies() {
-    devAssert(this.instance_, '%s: cannot find the instance', TAG);
-    return this.instance_.gdprAppliesPromise;
   }
 
   /**
@@ -250,13 +297,8 @@ export class ConsentInstance {
     /** @public {?Promise<Object>} */
     this.sharedDataPromise = null;
 
-    // TODO(micajuineho) remove this in favor
-    // of consolidation with consentString
-    /** @public {?Promise<?boolean>} */
-    this.gdprAppliesPromise = null;
-
     /** @private {Promise<!../../../src/service/storage-impl.Storage>} */
-    this.storagePromise_ = Services.storageForDoc(ampdoc);
+    this.storagePromise_ = Services.storageForTopLevelDoc(ampdoc);
 
     /** @private {?ConsentInfoDef}*/
     this.localConsentInfo_ = null;
@@ -295,6 +337,7 @@ export class ConsentInstance {
       this.update(
         info['consentState'],
         info['consentString'],
+        info['purposeConsents'],
         info['consentMetadata'],
         true
       );
@@ -305,24 +348,29 @@ export class ConsentInstance {
    * Update the local consent state list
    * @param {!CONSENT_ITEM_STATE} state
    * @param {string=} consentString
-   * @param {Object=} opt_consentMetadata
+   * @param {Object<string, PURPOSE_CONSENT_STATE>=} purposeConsents
+   * @param {ConsentMetadataDef=} opt_consentMetadata
    * @param {boolean=} opt_systemUpdate
    */
-  update(state, consentString, opt_consentMetadata, opt_systemUpdate) {
+  update(
+    state,
+    consentString,
+    purposeConsents,
+    opt_consentMetadata,
+    opt_systemUpdate
+  ) {
     const localState =
       this.localConsentInfo_ && this.localConsentInfo_['consentState'];
     const calculatedState = recalculateConsentStateValue(state, localState);
 
     if (state === CONSENT_ITEM_STATE.DISMISSED) {
-      const localConsentStr =
-        this.localConsentInfo_ && this.localConsentInfo_['consentString'];
-      const localConsentMetadata =
-        this.localConsentInfo_ && this.localConsentInfo_['consentMetadata'];
-      // If state is dismissed, use the old consent string and metadata.
+      // If state is dismissed, use the old consent string, metadata,
+      // and puporse consents.
       this.localConsentInfo_ = constructConsentInfo(
         calculatedState,
-        localConsentStr,
-        localConsentMetadata
+        this.localConsentInfo_?.consentString,
+        this.localConsentInfo_?.consentMetadata,
+        this.localConsentInfo_?.purposeConsents
       );
       return;
     }
@@ -335,6 +383,7 @@ export class ConsentInstance {
         calculatedState,
         consentString,
         opt_consentMetadata,
+        purposeConsents,
         true
       );
     } else {
@@ -343,7 +392,8 @@ export class ConsentInstance {
       this.localConsentInfo_ = constructConsentInfo(
         calculatedState,
         consentString,
-        opt_consentMetadata
+        opt_consentMetadata,
+        purposeConsents
       );
     }
 
@@ -351,6 +401,7 @@ export class ConsentInstance {
       calculatedState,
       consentString,
       opt_consentMetadata,
+      purposeConsents,
       this.hasDirtyBitNext_
     );
 
@@ -389,30 +440,45 @@ export class ConsentInstance {
         return;
       }
 
-      const consentStr = consentInfo['consentString'];
-      if (consentStr && consentStr.length > CONSENT_STRING_MAX_LENGTH) {
-        // Verify the length of consentString.
-        // 1024 * 4/3 (base64) = 1336 bytes.
-        user().error(
-          TAG,
-          'Cannot store consentString which length exceeds %s. ' +
-            'Previous stored consentInfo will be cleared',
-          CONSENT_STRING_MAX_LENGTH
-        );
-        // If new consentInfo value cannot be stored, need to remove previous
-        // value
-        storage.remove(this.storageKey_);
-        // TODO: Good to have a way to inform CMP service in this case
-        return;
-      }
-
-      // TODO: enforce metadata limits here (if any)
-
       const value = composeStoreValue(consentInfo);
       if (value == null) {
         // Value can be false, do not use !value check
         // Nothing to store to localStorage
         return;
+      }
+
+      // Check size
+      const size = JSON.stringify(
+        dict({
+          [this.storageKey_]: value,
+        })
+      ).length;
+
+      if (size > CONSENT_STORAGE_MAX) {
+        // Size restriction only applies to documents servered from a viewer
+        // that implements the storage API.
+        const usesViewerStorage = storage.isViewerStorage();
+        if (usesViewerStorage) {
+          // 1200 * 4/3 (base64) = 1600 bytes
+          user().error(
+            TAG,
+            'Cannot store consent information which length exceeds %s. ' +
+              'Previous stored consentInfo will be cleared',
+            CONSENT_STORAGE_MAX
+          );
+          // If new consentInfo value cannot be stored, need to remove previous
+          // value
+          storage.remove(this.storageKey_);
+          // TODO: Good to have a way to inform CMP service in this case
+          return;
+        }
+        user().info(
+          TAG,
+          'Current consent information length exceeds %s ' +
+            'and will not be stored when the page is served ' +
+            'from a viewer that supports the Local Storage API.',
+          CONSENT_STORAGE_MAX
+        );
       }
       this.savedConsentInfo_ = consentInfo;
       storage.setNonBoolean(this.storageKey_, value);
@@ -481,13 +547,7 @@ export class ConsentInstance {
     const legacyConsentState = calculateLegacyStateValue(
       consentInfo['consentState']
     );
-    const cidPromise = Services.cidForDoc(this.ampdoc_).then((cid) => {
-      return cid.get(
-        {scope: CID_SCOPE, createCookieIfNotPresent: true},
-        Promise.resolve()
-      );
-    });
-    cidPromise.then((userId) => {
+    getConsentCID(this.ampdoc_).then((userId) => {
       const request = /** @type {!JsonObject} */ ({
         // Unfortunately we need to keep the name to be backward compatible
         'consentInstanceId': this.id_,
@@ -505,6 +565,9 @@ export class ConsentInstance {
       if (consentInfo['consentMetadata']) {
         request['consentMetadata'] = consentInfo['consentMetadata'];
       }
+      if (consentInfo['purposeConsents']) {
+        request['purposeConsents'] = consentInfo['purposeConsents'];
+      }
       const init = {
         credentials: 'include',
         method: 'POST',
@@ -512,10 +575,12 @@ export class ConsentInstance {
         ampCors: false,
       };
       this.ampdoc_.whenFirstVisible().then(() => {
-        Services.xhrFor(this.ampdoc_.win).fetchJson(
-          /** @type {string} */ (this.onUpdateHref_),
-          init
-        );
+        expandConsentEndpointUrl(
+          this.ampdoc_.getHeadNode(),
+          /** @type {string} */ (this.onUpdateHref_)
+        ).then((expandedUpdateHref) => {
+          Services.xhrFor(this.ampdoc_.win).fetchJson(expandedUpdateHref, init);
+        });
       });
     });
   }

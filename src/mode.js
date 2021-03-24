@@ -29,7 +29,6 @@ import {parseQueryString_} from './url-parse-query-string';
  *   rtvVersion: string,
  *   runtime: (null|string|undefined),
  *   a4aId: (null|string|undefined),
- *   singlePassType: (string|undefined),
  *   esm: (boolean|undefined)
  * }}
  */
@@ -66,7 +65,7 @@ function getMode_(win) {
 
   // Magic constants that are replaced by closure compiler.
   // IS_MINIFIED is always replaced with true when closure compiler is used
-  // while IS_DEV is only replaced when `gulp dist` is called without the
+  // while IS_DEV is only replaced when `amp dist` is called without the
   // --fortesting flag.
   const IS_DEV = true;
   const IS_MINIFIED = false;
@@ -79,16 +78,15 @@ function getMode_(win) {
     // from the URL.
     win.location.originalHash || win.location.hash
   );
-  const {spt: singlePassType} = AMP_CONFIG;
 
   const searchQuery = parseQueryString_(win.location.search);
 
   if (!rtvVersion) {
-    rtvVersion = getRtvVersion(win, isLocalDev);
+    rtvVersion = getRtvVersion(win);
   }
 
   // The `minified`, `test` and `localDev` properties are replaced
-  // as boolean literals when we run `gulp dist` without the `--fortesting`
+  // as boolean literals when we run `amp dist` without the `--fortesting`
   // flags. This improved DCE on the production file we deploy as the code
   // paths for localhost/testing/development are eliminated.
   return {
@@ -114,7 +112,6 @@ function getMode_(win) {
     log: hashQuery['log'],
     version: internalRuntimeVersion(),
     rtvVersion,
-    singlePassType,
   };
 }
 
@@ -123,16 +120,9 @@ function getMode_(win) {
  * denoting canary/prod/experiment (unless `isLocalDev` is true).
  *
  * @param {!Window} win
- * @param {boolean} isLocalDev
  * @return {string}
  */
-function getRtvVersion(win, isLocalDev) {
-  // If it's local dev then we won't actually have a full version so
-  // just use the version.
-  if (isLocalDev) {
-    return internalRuntimeVersion();
-  }
-
+function getRtvVersion(win) {
   if (win.AMP_CONFIG && win.AMP_CONFIG.v) {
     return win.AMP_CONFIG.v;
   }
@@ -147,12 +137,11 @@ function getRtvVersion(win, isLocalDev) {
 
 /**
  * @param {!Window} win
- * @param {boolean} isLocalDev
  * @return {string}
  * @visibleForTesting
  */
-export function getRtvVersionForTesting(win, isLocalDev) {
-  return getRtvVersion(win, isLocalDev);
+export function getRtvVersionForTesting(win) {
+  return getRtvVersion(win);
 }
 
 /** @visibleForTesting */

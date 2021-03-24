@@ -16,11 +16,11 @@
 
 import {getChildJsonConfig} from '../../../src/json';
 import {getNormalizedHostnameFromUrl} from './utils';
-import {userAssert} from '../../../src/log';
+import {pureUserAssert as userAssert} from '../../../src/core/assert';
 
 import {
   DEFAULT_CONFIG,
-  GLOBAL_DOMAIN_BLACKLIST,
+  GLOBAL_DOMAIN_DENYLIST,
   OPTIONS_ERRORS,
   WAYPOINT_BASE_URL,
 } from './constants';
@@ -61,7 +61,7 @@ export function getAmpSkimlinksOptions(element, docInfo) {
 function getExcludedDomains_(element, internalDomains) {
   let excludedDomains = []
     .concat(internalDomains)
-    .concat(GLOBAL_DOMAIN_BLACKLIST);
+    .concat(GLOBAL_DOMAIN_DENYLIST);
 
   const excludedDomainsAttr = element.getAttribute('excluded-domains');
   if (excludedDomainsAttr) {

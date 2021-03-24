@@ -115,9 +115,12 @@ describes.realWin(
       }
 
       doc.body.appendChild(element);
+      // With this the document will start fetching more ASAP.
+      doc.scrollingElement.scrollTop =
+        options.scrollTop != undefined ? options.scrollTop : 1;
 
       if (waitForLayout) {
-        await element.build();
+        await element.buildInternal();
         await element.layoutCallback();
       }
 
@@ -172,7 +175,7 @@ describes.realWin(
           false /** waitForLayout */
         );
         await allowConsoleError(() =>
-          element.build().catch((err) => {
+          element.buildInternal().catch((err) => {
             expect(err.message).to.include(
               'amp-next-page Page list expected an array, found: object: [object Object]'
             );
@@ -245,7 +248,7 @@ describes.realWin(
           });
         const service = Services.nextPageServiceForDoc(doc);
 
-        await element.build();
+        await element.buildInternal();
         await element.layoutCallback();
 
         expect(
@@ -432,6 +435,37 @@ describes.realWin(
       });
     });
 
+    describe('initial behavior', () => {
+      let element;
+      let service;
+
+      beforeEach(async () => {
+        element = await getAmpNextPage(
+          {
+            inlineConfig: VALID_CONFIG,
+            scrollTop: 0,
+          },
+          /* no awaiting */ false
+        );
+
+        service = Services.nextPageServiceForDoc(doc);
+        env.sandbox.stub(service, 'getViewportsAway_').returns(2);
+      });
+
+      afterEach(async () => {
+        element.parentNode.removeChild(element);
+      });
+
+      it('awaits first scroll', async () => {
+        element.buildInternal();
+        await new Promise(setTimeout);
+        expect(service.pages_.length).to.equal(1);
+        win.dispatchEvent(new Event('scroll'));
+        await new Promise(setTimeout);
+        expect(service.pages_.length).to.equal(3);
+      });
+    });
+
     describe('infinite loading', () => {
       let element;
       let service;
@@ -463,6 +497,11 @@ describes.realWin(
         // Avoids loops (ignores previously inserted page)
         expect(
           service.pages_.filter((page) => page.title == 'Title 2').length
+        ).to.equal(1);
+
+        expect(
+          element.querySelectorAll('.i-amphtml-next-page-document-container')
+            .length
         ).to.equal(1);
       });
 
@@ -600,11 +639,7 @@ describes.realWin(
       });
 
       it('renders a custom separator correctly', async () => {
-        const separator = html`
-          <div separator>
-            Custom separator
-          </div>
-        `;
+        const separator = html` <div separator>Custom separator</div> `;
 
         element = await getAmpNextPage({
           inlineConfig: VALID_CONFIG,

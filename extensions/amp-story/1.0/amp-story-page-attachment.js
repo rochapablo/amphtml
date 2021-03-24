@@ -16,11 +16,13 @@
 
 import {Action, StateProperty} from './amp-story-store-service';
 import {DraggableDrawer, DrawerState} from './amp-story-draggable-drawer';
-import {HistoryState, setHistoryState} from './utils';
+import {HistoryState, setHistoryState} from './history';
+import {LocalizedStringId} from '../../../src/localized-strings';
 import {Services} from '../../../src/services';
 import {StoryAnalyticsEvent, getAnalyticsService} from './story-analytics';
 import {closest, removeElement} from '../../../src/dom';
-import {dev} from '../../../src/log';
+import {dev, devAssert} from '../../../src/log';
+import {getLocalizationService} from './amp-story-localization-service';
 import {getState} from '../../../src/history';
 import {htmlFor} from '../../../src/static-template';
 import {toggle} from '../../../src/style';
@@ -105,12 +107,20 @@ export class AmpStoryPageAttachment extends DraggableDrawer {
    * @private
    */
   buildInline_() {
-    this.headerEl_.appendChild(
+    const closeButtonEl = this.headerEl_.appendChild(
       htmlFor(this.element)`
-          <span class="i-amphtml-story-page-attachment-close-button" aria-label="X"
+          <button class="i-amphtml-story-page-attachment-close-button" aria-label="close"
               role="button">
-          </span>`
+          </button>`
     );
+    const localizationService = getLocalizationService(devAssert(this.element));
+    if (localizationService) {
+      const localizedCloseString = localizationService.getLocalizedString(
+        LocalizedStringId.AMP_STORY_CLOSE_BUTTON_LABEL
+      );
+      closeButtonEl.setAttribute('aria-label', localizedCloseString);
+    }
+
     this.headerEl_.appendChild(
       htmlFor(this.element)`
           <span class="i-amphtml-story-page-attachment-title"></span>`
@@ -228,6 +238,7 @@ export class AmpStoryPageAttachment extends DraggableDrawer {
 
     super.open(shouldAnimate);
 
+    this.storeService_.dispatch(Action.TOGGLE_PAGE_ATTACHMENT_STATE, true);
     this.storeService_.dispatch(Action.TOGGLE_SYSTEM_UI_IS_VISIBLE, false);
 
     // Don't create a new history entry for remote attachment as user is
@@ -264,7 +275,6 @@ export class AmpStoryPageAttachment extends DraggableDrawer {
     const animationEl = this.win.document.createElement('div');
     animationEl.classList.add('i-amphtml-story-page-attachment-expand');
     const storyEl = closest(this.element, (el) => el.tagName === 'AMP-STORY');
-    this.storeService_.dispatch(Action.TOGGLE_SYSTEM_UI_IS_VISIBLE, false);
 
     this.mutateElement(() => {
       storyEl.appendChild(animationEl);
@@ -313,6 +323,7 @@ export class AmpStoryPageAttachment extends DraggableDrawer {
 
     super.closeInternal_(shouldAnimate);
 
+    this.storeService_.dispatch(Action.TOGGLE_PAGE_ATTACHMENT_STATE, false);
     this.storeService_.dispatch(Action.TOGGLE_SYSTEM_UI_IS_VISIBLE, true);
 
     const storyEl = closest(this.element, (el) => el.tagName === 'AMP-STORY');

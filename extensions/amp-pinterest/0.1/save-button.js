@@ -158,11 +158,18 @@ export class SaveButton {
       }
     }
 
+    const text = this.lang === 'ja' ? '保存' : 'Save';
+
+    const textContent = this.round ? '' : text;
+
     const saveButton = Util.make(this.element.ownerDocument, {
       'a': {
         class: clazz.join(' '),
         href: this.href,
-        textContent: this.round ? '' : this.lang === 'ja' ? '保存' : 'Save',
+        textContent,
+        ...(!textContent && {
+          'aria-label': text,
+        }),
       },
     });
 
@@ -198,5 +205,14 @@ export class SaveButton {
       promise = Promise.resolve();
     }
     return promise.then(this.renderTemplate.bind(this));
+  }
+
+  /**
+   * Determine the height of the contents to allow resizing after first layout.
+   *
+   * @return {!Promise<number|null>}
+   */
+  height() {
+    return Promise.resolve(null);
   }
 }

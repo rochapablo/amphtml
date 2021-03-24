@@ -14,25 +14,27 @@
  * limitations under the License.
  */
 
-const colors = require('ansi-colors');
+const argv = require('minimist')(process.argv.slice(2));
 const debounce = require('debounce');
 const fs = require('fs-extra');
-const log = require('fancy-log');
-const watch = require('gulp-watch');
+const path = require('path');
 const wrappers = require('../compile/compile-wrappers');
 const {
   extensionAliasBundles,
   extensionBundles,
   verifyExtensionBundles,
+  jsBundles,
 } = require('../compile/bundles.config');
-const {endBuildStep, watchDebounceDelay} = require('./helpers');
-const {isTravisBuild} = require('../common/travis');
-const {jsifyCssAsync} = require('./jsify-css');
+const {analyticsVendorConfigs} = require('./analytics-vendor-configs');
+const {compileJison} = require('./compile-jison');
+const {endBuildStep, watchDebounceDelay, doBuildJs} = require('./helpers');
+const {green, red, cyan} = require('kleur/colors');
+const {isCiBuild} = require('../common/ci');
+const {jsifyCssAsync} = require('./css/jsify-css');
+const {log} = require('../common/logging');
 const {maybeToEsmName, compileJs, mkdirSync} = require('./helpers');
-const {vendorConfigs} = require('./vendor-configs');
-
-const {green, red, cyan} = colors;
-const argv = require('minimist')(process.argv.slice(2));
+const {removeFromClosureBabelCache} = require('../compile/pre-closure-babel');
+const {watch} = require('chokidar');
 
 /**
  * Extensions to build when `--extensions=inabox`.
@@ -72,12 +74,12 @@ const DEFAULT_EXTENSION_SET = ['amp-loader', 'amp-auto-lightbox'];
 
 /**
  * @typedef {{
- *   name: ?string,
- *   version: ?string,
- *   hasCss: ?boolean,
- *   loadPriority: ?string,
- *   cssBinaries: ?Array<string>,
- *   extraGlobs: ?Array<string>,
+ *   name?: string,
+ *   version?: string,
+ *   hasCss?: boolean,
+ *   loadPriority?: string,
+ *   cssBinaries?: Array<string>,
+ *   extraGlobs?: Array<string>,
  * }}
  */
 const ExtensionOption = {}; // eslint-disable-line no-unused-vars
@@ -95,7 +97,7 @@ const adVendors = [];
  * @param {string} name
  * @param {string|!Array<string>} version E.g. 0.1 or [0.1, 0.2]
  * @param {string} latestVersion E.g. 0.1
- * @param {!ExtensionOption} options extension options object.
+ * @param {!ExtensionOption|undefined} options extension options object.
  * @param {!Object} extensionsObject
  * @param {boolean} includeLatest
  */
@@ -130,10 +132,10 @@ function declareExtension(
 }
 
 /**
- * Initializes all extensions from build-system/compile/bundles.config.js if not
- * already done and populates the given extensions object.
+ * Initializes all extensions from build-system/compile/bundles.config.extensions.json
+ * if not already done and populates the given extensions object.
  * @param {?Object} extensionsObject
- * @param {?boolean} includeLatest
+ * @param {boolean=} includeLatest
  */
 function maybeInitializeExtensions(
   extensionsObject = extensions,
@@ -156,7 +158,7 @@ function maybeInitializeExtensions(
 
 /**
  * Set the extensions to build from example documents
- * (for internal use by `gulp performance`)
+ * (for internal use by `amp performance`)
  *
  * @param {Array<string>} examples Path to example documents
  */
@@ -175,10 +177,7 @@ function setExtensionsToBuildFromDocuments(examples) {
  * @return {!Array<string>}
  */
 function getExtensionsToBuild(preBuild = false) {
-  if (extensionsToBuild) {
-    return extensionsToBuild;
-  }
-  extensionsToBuild = DEFAULT_EXTENSION_SET;
+  extensionsToBuild = argv.core_runtime_only ? [] : DEFAULT_EXTENSION_SET;
   if (argv.extensions) {
     if (typeof argv.extensions !== 'string') {
       log(red('ERROR:'), 'Missing list of extensions.');
@@ -194,7 +193,11 @@ function getExtensionsToBuild(preBuild = false) {
     extensionsToBuild = dedupe(extensionsToBuild.concat(extensionsFrom));
   }
   if (
-    !(preBuild || argv.noextensions || argv.extensions || argv.extensions_from)
+    !preBuild &&
+    !argv.noextensions &&
+    !argv.extensions &&
+    !argv.extensions_from &&
+    !argv.core_runtime_only
   ) {
     const allExtensions = [];
     for (const extension in extensions) {
@@ -213,7 +216,7 @@ function getExtensionsToBuild(preBuild = false) {
  * @param {boolean=} preBuild
  */
 function parseExtensionFlags(preBuild = false) {
-  if (isTravisBuild()) {
+  if (isCiBuild()) {
     return;
   }
 
@@ -221,7 +224,7 @@ function parseExtensionFlags(preBuild = false) {
   const coreRuntimeOnlyMessage =
     green('⤷ Use ') +
     cyan('--core_runtime_only ') +
-    green('to build just the core runtime.');
+    green('to build just the core runtime and skip other JS targets.');
   const noExtensionsMessage =
     green('⤷ Use ') +
     cyan('--noextensions ') +
@@ -241,7 +244,7 @@ function parseExtensionFlags(preBuild = false) {
     cyan('foo.amp.html') +
     green('.');
 
-  if (argv.core_runtime_only) {
+  if (argv.core_runtime_only && !(argv.extensions || argv.extensions_from)) {
     log(green('Building just the core runtime.'));
   } else if (preBuild) {
     log(
@@ -278,7 +281,7 @@ function parseExtensionFlags(preBuild = false) {
  */
 function getExtensionsFromArg(examples) {
   if (!examples) {
-    return;
+    return [];
   }
 
   const extensions = [];
@@ -339,7 +342,7 @@ async function buildExtensions(options) {
     }
   }
   await Promise.all(results);
-  if (!options.compileOnlyCss && !argv.single_pass) {
+  if (!options.compileOnlyCss && results.length > 0) {
     endBuildStep(
       options.minify ? 'Minified all' : 'Compiled all',
       'extensions',
@@ -373,15 +376,19 @@ async function doBuildExtension(extensions, extension, options) {
  * Watches the contents of an extension directory. When a file in the given path
  * changes, the extension is rebuilt.
  *
- * @param {string} path
+ * @param {string} extDir
  * @param {string} name
  * @param {string} version
  * @param {string} latestVersion
  * @param {boolean} hasCss
  * @param {?Object} options
  */
-function watchExtension(path, name, version, latestVersion, hasCss, options) {
-  const watchFunc = function () {
+function watchExtension(extDir, name, version, latestVersion, hasCss, options) {
+  function watchFunc() {
+    if (options.minify) {
+      removeFromClosureBabelCache(extDir);
+    }
+
     const bundleComplete = buildExtension(
       name,
       version,
@@ -392,8 +399,8 @@ function watchExtension(path, name, version, latestVersion, hasCss, options) {
     if (options.onWatchBuild) {
       options.onWatchBuild(bundleComplete);
     }
-  };
-  watch(path + '/**/*', debounce(watchFunc, watchDebounceDelay));
+  }
+  watch(`${extDir}/**/*`).on('change', debounce(watchFunc, watchDebounceDelay));
 }
 
 /**
@@ -429,14 +436,14 @@ async function buildExtension(
   if (options.compileOnlyCss && !hasCss) {
     return;
   }
-  const path = 'extensions/' + name + '/' + version;
+  const extDir = 'extensions/' + name + '/' + version;
 
   // Use a separate watcher for extensions to copy / inline CSS and compile JS
   // instead of relying on the watchers used by compileUnminifiedJs and
   // compileMinifiedJs, which only recompile JS.
   if (options.watch) {
     options.watch = false;
-    watchExtension(path, name, version, latestVersion, hasCss, options);
+    watchExtension(extDir, name, version, latestVersion, hasCss, options);
     // When an ad network extension is being watched, also watch amp-a4a.
     if (name.match(/amp-ad-network-.*-impl/)) {
       const a4aPath = `extensions/amp-a4a/${version}`;
@@ -446,27 +453,30 @@ async function buildExtension(
   if (hasCss) {
     mkdirSync('build');
     mkdirSync('build/css');
-    await buildExtensionCss(path, name, version, options);
+    await buildExtensionCss(extDir, name, version, options);
     if (options.compileOnlyCss) {
       return;
     }
   }
+
+  await compileJison(path.join(extDir, '**', '*.jison'));
+  if (name === 'amp-bind') {
+    await doBuildJs(jsBundles, 'ww.max.js', options);
+  }
   if (name === 'amp-analytics') {
-    await vendorConfigs(options);
+    await analyticsVendorConfigs(options);
   }
-  if (!argv.single_pass) {
-    await buildExtensionJs(path, name, version, latestVersion, options);
-  }
+  await buildExtensionJs(extDir, name, version, latestVersion, options);
 }
 
 /**
- * @param {string} path
+ * @param {string} extDir
  * @param {string} name
  * @param {string} version
  * @param {!Object} options
  * @return {!Promise}
  */
-function buildExtensionCss(path, name, version, options) {
+function buildExtensionCss(extDir, name, version, options) {
   /**
    * Writes CSS binaries
    *
@@ -484,7 +494,7 @@ function buildExtensionCss(path, name, version, options) {
   const isAliased = aliasBundle && aliasBundle.version == version;
 
   const promises = [];
-  const mainCssBinary = jsifyCssAsync(path + '/' + name + '.css').then(
+  const mainCssBinary = jsifyCssAsync(extDir + '/' + name + '.css').then(
     (mainCss) => {
       writeCssBinaries(`${name}-${version}.css`, mainCss);
       if (isAliased) {
@@ -497,7 +507,7 @@ function buildExtensionCss(path, name, version, options) {
     promises.push.apply(
       promises,
       options.cssBinaries.map(function (name) {
-        return jsifyCssAsync(`${path}/${name}.css`).then((css) => {
+        return jsifyCssAsync(`${extDir}/${name}.css`).then((css) => {
           writeCssBinaries(`${name}-${version}.css`, css);
           if (isAliased) {
             writeCssBinaries(`${name}-${aliasBundle.aliasedVersion}.css`, css);
@@ -513,7 +523,7 @@ function buildExtensionCss(path, name, version, options) {
 /**
  * Build the JavaScript for the extension specified
  *
- * @param {string} path Path to the extensions directory
+ * @param {string} extDir Path to the extension's directory
  * @param {string} name Name of the extension. Must be the sub directory in
  *     the extensions directory and the name of the JS and optional CSS file.
  * @param {string} version Version of the extension. Must be identical to
@@ -522,17 +532,17 @@ function buildExtensionCss(path, name, version, options) {
  * @param {!Object} options
  * @return {!Promise}
  */
-async function buildExtensionJs(path, name, version, latestVersion, options) {
+async function buildExtensionJs(extDir, name, version, latestVersion, options) {
   const filename = options.filename || name + '.js';
+  const latest = version === latestVersion;
   await compileJs(
-    path + '/',
+    extDir + '/',
     filename,
     './dist/v0',
     Object.assign(options, {
       toName: `${name}-${version}.max.js`,
       minifiedName: `${name}-${version}.js`,
-      latestName: version === latestVersion ? `${name}-latest.js` : '',
-      esmPassCompilation: argv.esm || false,
+      latestName: latest ? `${name}-latest.js` : '',
       // Wrapper that either registers the extension or schedules it for
       // execution after the main binary comes back.
       // The `function` is wrapped in `()` to avoid lazy parsing it,
@@ -540,7 +550,13 @@ async function buildExtensionJs(path, name, version, latestVersion, options) {
       // See https://github.com/ampproject/amphtml/issues/3977
       wrapper: options.noWrapper
         ? ''
-        : wrappers.extension(name, options.loadPriority),
+        : wrappers.extension(
+            name,
+            version,
+            latest,
+            argv.esm,
+            options.loadPriority
+          ),
     })
   );
 
@@ -563,14 +579,79 @@ async function buildExtensionJs(path, name, version, latestVersion, options) {
   }
 
   if (name === 'amp-script') {
-    // Copy @ampproject/worker-dom/dist/amp/worker/worker.js to dist/ folder.
-    const dir = 'node_modules/@ampproject/worker-dom/dist/amp/worker/';
-    const file = `dist/v0/amp-script-worker-${version}`;
-    // The "js" output is minified and transpiled to ES5.
-    fs.copyFileSync(dir + 'worker.js', `${file}.js`);
-    // The "mjs" output is unminified ES6 and has debugging flags enabled.
-    fs.copyFileSync(dir + 'worker.mjs', `${file}.max.js`);
+    copyWorkerDomResources(version);
   }
+}
+
+/**
+ * Copies the required resources from @ampproject/worker-dom and renames
+ * them accordingly.
+ *
+ * @param {string} version
+ */
+async function copyWorkerDomResources(version) {
+  const startTime = Date.now();
+  const workerDomDir = 'node_modules/@ampproject/worker-dom';
+  const targetDir = 'dist/v0';
+  const dir = `${workerDomDir}/dist`;
+  const workerFilesToDeploy = new Map([
+    ['amp-production/worker/worker.js', `amp-script-worker-${version}.js`],
+    [
+      'amp-production/worker/worker.nodom.js',
+      `amp-script-worker-nodom-${version}.js`,
+    ],
+    ['amp-production/worker/worker.mjs', `amp-script-worker-${version}.mjs`],
+    [
+      'amp-production/worker/worker.nodom.mjs',
+      `amp-script-worker-nodom-${version}.mjs`,
+    ],
+    [
+      'amp-production/worker/worker.js.map',
+      `amp-script-worker-${version}.js.map`,
+    ],
+    [
+      'amp-production/worker/worker.nodom.js.map',
+      `amp-script-worker-nodom-${version}.js.map`,
+    ],
+    [
+      'amp-production/worker/worker.mjs.map',
+      `amp-script-worker-${version}.mjs.map`,
+    ],
+    [
+      'amp-production/worker/worker.nodom.mjs.map',
+      `amp-script-worker-nodom-${version}.mjs.map`,
+    ],
+    ['amp-debug/worker/worker.js', `amp-script-worker-${version}.max.js`],
+    [
+      'amp-debug/worker/worker.nodom.js',
+      `amp-script-worker-nodom-${version}.max.js`,
+    ],
+    ['amp-debug/worker/worker.mjs', `amp-script-worker-${version}.max.mjs`],
+    [
+      'amp-debug/worker/worker.nodom.mjs',
+      `amp-script-worker-nodom-${version}.max.mjs`,
+    ],
+    [
+      'amp-debug/worker/worker.js.map',
+      `amp-script-worker-${version}.max.js.map`,
+    ],
+    [
+      'amp-debug/worker/worker.nodom.js.map',
+      `amp-script-worker-nodom-${version}.max.js.map`,
+    ],
+    [
+      'amp-debug/worker/worker.mjs.map',
+      `amp-script-worker-${version}.max.mjs.map`,
+    ],
+    [
+      'amp-debug/worker/worker.nodom.mjs.map',
+      `amp-script-worker-nodom-${version}.max.mjs.map`,
+    ],
+  ]);
+  for (const [src, dest] of workerFilesToDeploy) {
+    await fs.copy(`${dir}/${src}`, `${targetDir}/${dest}`);
+  }
+  endBuildStep('Copied', '@ampproject/worker-dom resources', startTime);
 }
 
 module.exports = {

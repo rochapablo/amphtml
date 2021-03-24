@@ -15,8 +15,8 @@
  */
 
 import {Renderer} from './amp-ad-type-defs';
-import {devAssert} from '../../../src/log';
-import {getAmpAdTemplateHelper} from './template-validator';
+import {pureDevAssert as devAssert} from '../../../src/core/assert';
+import {getAmpAdTemplateHelper} from './amp-ad-template-helper';
 import {renderCreativeIntoFriendlyFrame} from './friendly-frame-util';
 
 /**
@@ -40,6 +40,17 @@ export class TemplateRenderer extends Renderer {
     super();
   }
 
+  /**
+   * Retrieve the content document depending on browser support
+   *
+   * @param {*} iframe
+   *   The iframe to retrieve the document of
+   * @return {*}
+   */
+  getDocument(iframe) {
+    return iframe.contentDocument || iframe.contentWindow.document;
+  }
+
   /** @override */
   render(context, element, creativeData) {
     creativeData = /** @type {CreativeData} */ (creativeData);
@@ -61,16 +72,16 @@ export class TemplateRenderer extends Renderer {
       if (!data) {
         return Promise.resolve();
       }
-      const templateHelper = getAmpAdTemplateHelper(context.win);
+      const templateHelper = getAmpAdTemplateHelper(element);
       return templateHelper
-        .render(data, iframe.contentWindow.document.body)
+        .render(data, this.getDocument(iframe).body)
         .then((renderedElement) => {
           const {analytics} = templateData;
           if (analytics) {
             templateHelper.insertAnalytics(renderedElement, analytics);
           }
           // This element must exist, or #render() would have thrown.
-          const templateElement = iframe.contentWindow.document.querySelector(
+          const templateElement = this.getDocument(iframe).querySelector(
             'template'
           );
           templateElement.parentNode.replaceChild(

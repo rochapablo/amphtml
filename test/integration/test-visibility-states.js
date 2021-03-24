@@ -82,8 +82,8 @@ t.run('Viewer Visibility State', () => {
 
       function waitForNextPass() {
         return new Promise((resolve) => {
-          shouldPass = true;
           notifyPass = resolve;
+          shouldPass = true;
           resources.schedulePass();
         });
       }
@@ -93,7 +93,6 @@ t.run('Viewer Visibility State', () => {
         unlayoutCallback.reset();
         pauseCallback.reset();
         resumeCallback.reset();
-        //unselect.reset();
       }
 
       beforeEach(() => {
@@ -120,8 +119,6 @@ t.run('Viewer Visibility State', () => {
             resources = Services.resourcesForDoc(win.document);
             doPass_ = resources.doPass;
             env.sandbox.stub(resources, 'doPass').callsFake(doPass);
-            // TODO(jridgewell@): Do not stub private method
-            //unselect = env.sandbox.stub(resources, 'unselectText_');
 
             const img = win.document.createElement('amp-img');
             img.setAttribute('width', 100);
@@ -132,36 +129,20 @@ t.run('Viewer Visibility State', () => {
             return whenUpgradedToCustomElement(img);
           })
           .then((img) => {
-            layoutCallback = env.sandbox.stub(
-              img.implementation_,
-              'layoutCallback'
-            );
-            unlayoutCallback = env.sandbox.stub(
-              img.implementation_,
-              'unlayoutCallback'
-            );
-            pauseCallback = env.sandbox.stub(
-              img.implementation_,
-              'pauseCallback'
-            );
-            resumeCallback = env.sandbox.stub(
-              img.implementation_,
-              'resumeCallback'
-            );
-            prerenderAllowed = env.sandbox.stub(
-              img.implementation_,
-              'prerenderAllowed'
-            );
-            env.sandbox
-              .stub(img.implementation_, 'isRelayoutNeeded')
-              .callsFake(() => true);
-            env.sandbox
-              .stub(img.implementation_, 'isLayoutSupported')
-              .callsFake(() => true);
+            prerenderAllowed = env.sandbox.stub(img, 'prerenderAllowed');
+            prerenderAllowed.returns(false);
+            return img.getImpl(false);
+          })
+          .then((impl) => {
+            layoutCallback = env.sandbox.stub(impl, 'layoutCallback');
+            unlayoutCallback = env.sandbox.stub(impl, 'unlayoutCallback');
+            pauseCallback = env.sandbox.stub(impl, 'pauseCallback');
+            resumeCallback = env.sandbox.stub(impl, 'resumeCallback');
+            env.sandbox.stub(impl, 'isRelayoutNeeded').callsFake(() => true);
+            env.sandbox.stub(impl, 'isLayoutSupported').callsFake(() => true);
 
             layoutCallback.returns(Promise.resolve());
             unlayoutCallback.returns(true);
-            prerenderAllowed.returns(false);
           });
       });
 
@@ -334,7 +315,6 @@ t.run('Viewer Visibility State', () => {
             expect(unlayoutCallback).to.have.been.called;
             expect(pauseCallback).to.have.been.called;
             expect(resumeCallback).not.to.have.been.called;
-            //expect(unselect).to.have.been.called;
           });
         });
 
@@ -392,7 +372,6 @@ t.run('Viewer Visibility State', () => {
             expect(unlayoutCallback).to.have.been.called;
             expect(pauseCallback).to.have.been.called;
             expect(resumeCallback).not.to.have.been.called;
-            //expect(unselect).to.have.been.called;
           });
         });
 
@@ -517,9 +496,8 @@ t.run('Viewer Visibility State', () => {
           return waitForNextPass().then(() => {
             expect(layoutCallback).not.to.have.been.called;
             expect(unlayoutCallback).to.have.been.called;
-            expect(pauseCallback).not.to.have.been.called;
+            expect(pauseCallback).to.have.been.called;
             expect(resumeCallback).not.to.have.been.called;
-            //expect(unselect).to.have.been.called;
           });
         });
 

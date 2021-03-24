@@ -17,7 +17,7 @@
 import {dict} from './utils/object';
 import {isArray} from './types';
 import {toStructuredCloneable} from './utils/xhr-utils';
-import {userAssert} from './log';
+import {pureUserAssert as userAssert} from './core/assert';
 
 /**
  * @typedef {{
@@ -114,7 +114,7 @@ export class SsrTemplateHelper {
    * If SSR is supported, data is assumed to be from ssr() above.
    * @param {!Element} element
    * @param {(?JsonObject|string|undefined|!Array)} data
-   * @return {!Promise<!Element>}
+   * @return {!Promise<(!Element|!Array<!Element>)>}
    */
   applySsrOrCsrTemplate(element, data) {
     let renderTemplatePromise;

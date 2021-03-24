@@ -28,7 +28,6 @@ const {
   getLocalPathFromExtension,
   urlToCachePath,
 } = require('./helpers');
-const {JSDOM} = require('jsdom');
 
 /**
  * Lookup URL from cache and rewrite URLs to build from working branch
@@ -38,6 +37,7 @@ const {JSDOM} = require('jsdom');
 async function useLocalScripts(url) {
   const cachePath = urlToCachePath(url, EXPERIMENT);
   const document = fs.readFileSync(cachePath);
+  const {JSDOM} = await import('jsdom'); // Lazy-imported to speed up task loading.
   const dom = new JSDOM(document);
 
   const scripts = Array.from(dom.window.document.querySelectorAll('script'));
@@ -60,13 +60,15 @@ async function useLocalScripts(url) {
 }
 
 /**
- * Lookup URL from cache and download scripts to cache and rewrite URLs to local copy
+ * Lookup URL from cache and download scripts to cache and rewrite URLs to local
+ * copy
  *
  * @param {string} url
  */
 async function useRemoteScripts(url) {
   const cachePath = urlToCachePath(url, CONTROL);
   const document = fs.readFileSync(cachePath);
+  const {JSDOM} = await import('jsdom'); // Lazy-imported to speed up task loading.
   const dom = new JSDOM(document);
 
   const scripts = Array.from(dom.window.document.querySelectorAll('script'));
@@ -90,6 +92,7 @@ async function useRemoteScripts(url) {
 /**
  * Download local and master version of default extension that
  * are not explicility stated by script tags in the HTML.
+ * @return {Promise}
  */
 async function downloadDefaultExtensions() {
   return Promise.all(

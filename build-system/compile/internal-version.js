@@ -27,11 +27,9 @@ const argv = minimist(process.argv.slice(2), {
  * Generates the AMP version number.
  *
  * Version numbers are determined using the following algorithm:
- * - Count the number (<X>) of cherry-picked commits on this branch that came
- *   from the `master` branch, until reaching `master` or the first commit that
- *   was added directly on this branch (if the current commit is on `master`'s
- *   commit history, or only contains new commits that are not cherry-picked
- *   from `master`, then <X> is 0).
+ * - Count the number (<X>) of cherry-picked commits on this branch,
+ *   including non `master` commits. If this branch only contains new commits
+ *   that are not cherry-picked, then <X> is 0).
  * - Find the commit (<C>) before the last cherry-picked commit from the
  *   `master` branch (if the current branch is `master`, or otherwise in
  *   `master`'s commit history, then the current commit is <C>).
@@ -74,7 +72,7 @@ const argv = minimist(process.argv.slice(2), {
  *      one day is added.
  *
  * The version number can be manually overridden by passing --version_override
- * to the `gulp build`/`gulp dist` command.
+ * to the `amp build`/`amp dist` command.
  *
  * @return {string} AMP version number (always 13 digits long)
  */
@@ -87,17 +85,12 @@ function getVersion() {
     return version;
   }
 
-  let numberOfCherryPicks = 0;
-  const commitCherriesInfo = gitCherryMaster().reverse();
-  for (const {isCherryPick} of commitCherriesInfo) {
-    if (!isCherryPick) {
-      break;
-    }
-    numberOfCherryPicks++;
-  }
+  const numberOfCherryPicks = gitCherryMaster().length;
   if (numberOfCherryPicks > 999) {
     throw new Error(
-      `This branch has ${numberOfCherryPicks} cherry-picks, which is more than 999, the maximum allowed number of cherry-picks!`
+      `This branch has ${numberOfCherryPicks} cherry-picks, which is more ` +
+        'than 999, the maximum allowed number of cherry-picks! Please make ' +
+        'sure your local master branch is up to date.'
     );
   }
 
@@ -105,8 +98,8 @@ function getVersion() {
     `HEAD~${numberOfCherryPicks}`
   ).slice(0, -2);
 
-  numberOfCherryPicks = String(numberOfCherryPicks).padStart(3, '0');
-  return `${lastCommitFormattedTime}${numberOfCherryPicks}`;
+  const numberOfCherryPicksStr = String(numberOfCherryPicks).padStart(3, '0');
+  return `${lastCommitFormattedTime}${numberOfCherryPicksStr}`;
 }
 
 // Used to e.g. references the ads binary from the runtime to get version lock.

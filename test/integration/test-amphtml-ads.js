@@ -19,7 +19,10 @@ import {maybeSwitchToCompiledJs} from '../../testing/iframe';
 import {parseQueryString} from '../../src/url';
 import {xhrServiceForTesting} from '../../src/service/xhr-impl';
 
-describe('AMPHTML ad on AMP Page', () => {
+// TODO(wg-monetization, #29112): Unskip on Safari.
+const t = describe.configure().skipSafari();
+
+t.run('AMPHTML ad on AMP Page', () => {
   describes.integration(
     'ATF',
     {
@@ -38,6 +41,10 @@ describe('AMPHTML ad on AMP Page', () => {
       `,
     },
     () => {
+      afterEach(() => {
+        return RequestBank.tearDown();
+      });
+
       it('should layout amp-img, amp-pixel, amp-analytics', () => {
         // Open http://ads.localhost:9876/amp4test/a4a/12345 to see ad content
         return testAmpComponents();
@@ -65,7 +72,11 @@ describe('AMPHTML ad on AMP Page', () => {
       `,
     },
     (env) => {
-      // TODO(#24657): Flaky on Travis.
+      afterEach(() => {
+        return RequestBank.tearDown();
+      });
+
+      // TODO(#24657): Flaky on CI.
       it.skip('should layout amp-img, amp-pixel, amp-analytics', () => {
         // Open http://ads.localhost:9876/amp4test/a4a/12345 to see ad content
         return testAmpComponentsBTF(env.win);
@@ -74,7 +85,7 @@ describe('AMPHTML ad on AMP Page', () => {
   );
 });
 
-describe('AMPHTML ad on non-AMP page (inabox)', () => {
+t.run('AMPHTML ad on non-AMP page (inabox)', () => {
   describes.integration(
     'ATF',
     {
@@ -96,6 +107,7 @@ describe('AMPHTML ad on non-AMP page (inabox)', () => {
 
       afterEach(() => {
         unregisterIframe(env.win, env.win.document.getElementById('inabox'));
+        return RequestBank.tearDown();
       });
     }
   );
@@ -130,6 +142,7 @@ describe('AMPHTML ad on non-AMP page (inabox)', () => {
 
       afterEach(() => {
         unregisterIframe(env.win, env.win.document.getElementById('inabox'));
+        return RequestBank.tearDown();
       });
     }
   );
@@ -157,6 +170,7 @@ describe('AMPHTML ad on non-AMP page (inabox)', () => {
 
       afterEach(() => {
         unregisterIframe(env.win, env.win.document.getElementById('inabox'));
+        return RequestBank.tearDown();
       });
     }
   );
@@ -187,6 +201,7 @@ describe('AMPHTML ad on non-AMP page (inabox)', () => {
       afterEach(() => {
         unregisterIframe(env.win, iframe);
         env.win.document.body.removeChild(iframe);
+        return RequestBank.tearDown();
       });
 
       it(
@@ -238,6 +253,7 @@ describe('AMPHTML ad on non-AMP page (inabox)', () => {
       afterEach(() => {
         unregisterIframe(env.win, iframe);
         env.win.document.body.removeChild(iframe);
+        return RequestBank.tearDown();
       });
 
       it.skip(
@@ -261,7 +277,8 @@ describe('AMPHTML ad on non-AMP page (inabox)', () => {
   );
 });
 
-describe('A more real AMPHTML image ad', () => {
+// TODO(wg-monetization, #24421): Make this test less flaky.
+t.skip('A more real AMPHTML image ad', () => {
   const {testServerPort} = window.ampTestRuntimeConfig;
 
   // The image ad as seen in examples/inabox.gpt.html,
@@ -317,12 +334,14 @@ describe('A more real AMPHTML image ad', () => {
         Array.prototype.push.apply(env.win.ampInaboxIframes, [iframe]);
       });
 
-      it('should properly render ad in a friendly iframe with viewability pings', () => {
+      // TODO(wg-monetization, #24421): Make this test less flaky.
+      it.skip('should properly render ad in a friendly iframe with viewability pings', () => {
         writeFriendlyFrame(doc, iframe, adBody);
         return testVisibilityPings(0, 1000);
       });
 
-      it('should properly render ad in a safe frame with viewability pings', () => {
+      // TODO(wg-monetization, #24421): Make this test less flaky.
+      it.skip('should properly render ad in a safe frame with viewability pings', () => {
         writeSafeFrame(doc, iframe, adBody);
         return testVisibilityPings(0, 1000);
       });
@@ -330,6 +349,7 @@ describe('A more real AMPHTML image ad', () => {
       afterEach(() => {
         unregisterIframe(env.win, iframe);
         doc.body.removeChild(iframe);
+        return RequestBank.tearDown();
       });
     }
   );
@@ -366,6 +386,7 @@ describe('A more real AMPHTML image ad', () => {
 
       afterEach(() => {
         doc.body.removeChild(iframe);
+        return RequestBank.tearDown();
       });
     }
   );
@@ -408,6 +429,7 @@ describe('A more real AMPHTML image ad', () => {
       afterEach(() => {
         unregisterIframe(env.win, iframe);
         doc.body.removeChild(iframe);
+        return RequestBank.tearDown();
       });
     }
   );

@@ -269,6 +269,22 @@ describes.fakeWin(
       });
     });
 
+    it('should call pop if stack is empty and passed true', () => {
+      bindingMock
+        .expects('pop')
+        .once()
+        .returns(Promise.resolve({stackIndex: 0}));
+
+      return history.goBack(true);
+    });
+
+    it('should not call pop() if stack is empty and passed a falsy arg', async () => {
+      bindingMock.expects('pop').never();
+
+      await history.goBack();
+      await history.goBack(false);
+    });
+
     it('should get fragment', () => {
       bindingMock
         .expects('getFragment')
@@ -305,8 +321,8 @@ describes.sandboxed('History install', {}, () => {
     installTimerService(window);
     win = {
       __AMP_SERVICES: {
-        'viewer': {obj: viewer},
-        'timer': {obj: Services.timerFor(window)},
+        'viewer': {obj: viewer, ctor: Object},
+        'timer': {obj: Services.timerFor(window), ctor: Object},
       },
       history: {
         length: 0,
